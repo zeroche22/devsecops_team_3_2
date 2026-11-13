@@ -1,0 +1,6 @@
+---
+- name: Застосування посилення безпеки та блокування парольного входу SSH
+  hosts: all
+  become: true
+  roles:
+    - security

@@ -1,0 +1,28 @@
+---
+- name: Застосування базових налаштувань, користувачів та посилення безпеки
+  hosts: all
+  become: true
+  roles:
+    - users
+    - common
+    - security
+
+- name: Налаштування вузла керування Study3-setup
+  hosts: control_nodes
+  become: true
+  roles:
+    - docker
+    - ci_runner
+
+- name: Налаштування вузла Study3-minikube
+  hosts: k8s_nodes
+  become: true
+  roles:
+    - docker
+    - minikube
+
+- name: Налаштування вузла спостережуваності Study3-observability
+  hosts: monitoring_nodes
+  become: true
+  roles:
+    - docker

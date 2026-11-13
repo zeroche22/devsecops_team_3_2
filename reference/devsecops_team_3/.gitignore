@@ -1,0 +1,38 @@
+# Git ignore rules for DevSecOps Repository
+
+# Secrets & Credentials (Shift-Left Security: NEVER commit secrets)
+*.conf
+*.key
+*.pem
+*.pub
+id_rsa*
+*.vault_pass*
+text.txt
+
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+*.tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraform.lock.hcl
+
+# Ansible
+*.retry
+ansible/.vault_password
+
+# Archives & Temporary files
+.idea/
+*.zip
+*.tar.gz
+*:Zone.Identifier
+.DS_Store
+*.swp
+*~

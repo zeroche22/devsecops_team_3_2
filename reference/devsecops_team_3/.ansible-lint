@@ -1,0 +1,18 @@
+---
+profile: basic
+exclude_paths:
+  - .git/
+  - .github/
+  - .idea/
+  - app/
+  - k8s/
+  - security/
+  - terraform/
+  - ansible/group_vars/all/vault.yml
+skip_list:
+  - role-name
+  - name[casing]
+  - ignore-errors
+  - no-free-form
+  - command-instead-of-module
+  - risky-file-permissions

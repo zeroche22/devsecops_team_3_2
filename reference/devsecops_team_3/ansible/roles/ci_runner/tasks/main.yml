@@ -1,0 +1,100 @@
+---
+- name: Встановлення Ansible Core на вузлі керування
+  ansible.builtin.apt:
+    name:
+      - ansible-core
+    state: present
+    update_cache: true
+
+- name: Створення непривілейованого користувача github-runner
+  ansible.builtin.user:
+    name: github-runner
+    shell: /bin/bash
+    groups: docker
+    append: true
+    create_home: true
+    state: present
+    generate_ssh_key: true
+    ssh_key_type: ed25519
+    ssh_key_file: .ssh/id_ed25519
+    ssh_key_comment: "github-runner@Study3-setup"
+
+- name: Зчитування публічного SSH-ключа github-runner
+  ansible.builtin.slurp:
+    src: /home/github-runner/.ssh/id_ed25519.pub
+  register: ci_runner_ssh_pubkey
+
+- name: Збереження публічного ключа github-runner у фактах хоста
+  ansible.builtin.set_fact:
+    ci_runner_pubkey: "{{ ci_runner_ssh_pubkey.content | b64decode | trim }}"
+
+- name: Отримання останньої версії Cosign CLI
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/sigstore/cosign/releases/latest
+    return_content: true
+  register: ci_runner_cosign_release
+
+- name: Завантаження бінарного файлу Cosign CLI
+  ansible.builtin.get_url:
+    url: "https://github.com/sigstore/cosign/releases/download/{{ ci_runner_cosign_release.json.tag_name }}/cosign-linux-amd64"
+    dest: /usr/local/bin/cosign
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Створення директорії для GitHub Actions Runner
+  ansible.builtin.file:
+    path: /opt/actions-runner
+    state: directory
+    owner: github-runner
+    group: github-runner
+    mode: '0755'
+
+- name: Отримання останньої версії GitHub Actions Runner
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/actions/runner/releases/latest
+    return_content: true
+  register: ci_runner_release
+
+- name: Встановлення факту версії раннера
+  ansible.builtin.set_fact:
+    ci_runner_version: "{{ ci_runner_release.json.tag_name | regex_replace('^v', '') }}"
+
+- name: Завантаження та розпакування GitHub Actions Runner
+  ansible.builtin.unarchive:
+    src: "https://github.com/actions/runner/releases/download/v{{ ci_runner_version }}/actions-runner-linux-x64-{{ ci_runner_version }}.tar.gz"
+    dest: /opt/actions-runner
+    remote_src: true
+    owner: github-runner
+    group: github-runner
+    creates: /opt/actions-runner/config.sh
+
+- name: Встановлення системних залежностей GitHub Actions Runner
+  ansible.builtin.command: ./bin/installdependencies.sh
+  args:
+    chdir: /opt/actions-runner
+  changed_when: false
+
+- name: Реєстрація GitHub Actions Runner при наявності токена
+  become: true
+  become_user: github-runner
+  ansible.builtin.command: >
+    ./config.sh --unattended
+    --url {{ github_repo_url | default('https://github.com/zeroche22/devsecops_team_3') }}
+    --token {{ github_runner_token }}
+    --name {{ inventory_hostname }}
+    --labels self-hosted,Linux,X64,study3-setup
+    --replace
+  args:
+    chdir: /opt/actions-runner
+    creates: /opt/actions-runner/.runner
+  when: github_runner_token is defined and github_runner_token | length > 0
+
+- name: Встановлення та запуск systemd-сервісу GitHub Actions Runner
+  ansible.builtin.shell: |
+    ./svc.sh install github-runner
+    ./svc.sh start
+  args:
+    chdir: /opt/actions-runner
+    creates: /etc/systemd/system/actions.runner.zeroche22-devsecops_team_3.Study3-setup.service
+  when: github_runner_token is defined and github_runner_token | length > 0

@@ -1,0 +1,7 @@
+---
+bootstrap_user: student
+bootstrap_ssh_pass: "{{ vault_bootstrap_ssh_pass }}"
+bootstrap_become_pass: "{{ vault_bootstrap_become_pass }}"
+vsphere_user: "{{ vault_vsphere_user }}"
+vsphere_password: "{{ vault_vsphere_password }}"
+github_runner_token: "{{ vault_github_runner_token | default('') }}"

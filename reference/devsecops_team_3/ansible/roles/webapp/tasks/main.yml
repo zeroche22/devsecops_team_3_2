@@ -1,0 +1,34 @@
+---
+- name: Create app directory on host
+  ansible.builtin.file:
+    path: /opt/webapp
+    state: directory
+    mode: '0755'
+    owner: "{{ ansible_user | default('ubuntu') }}"
+
+- name: Copy web application source and Dockerfile
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../app/"
+    dest: /opt/webapp/
+    owner: "{{ ansible_user | default('ubuntu') }}"
+    mode: '0644'
+
+- name: Build web application Docker image
+  community.docker.docker_image:
+    name: study3-devsecops-web
+    build:
+      path: /opt/webapp
+    source: build
+    state: present
+
+- name: Run web application container
+  community.docker.docker_container:
+    name: devsecops-webapp
+    image: study3-devsecops-web:latest
+    state: started
+    restart_policy: always
+    published_ports:
+      - "80:8080"
+    security_opts:
+      - no-new-privileges:true
+    read_only: false

@@ -1,0 +1,57 @@
+---
+- name: Встановлення системних залежностей для Minikube (conntrack, socat, iptables)
+  ansible.builtin.apt:
+    name:
+      - conntrack
+      - socat
+      - iptables
+    state: present
+    update_cache: true
+
+- name: Завантаження бінарного файлу kubectl
+  ansible.builtin.get_url:
+    url: "https://dl.k8s.io/release/v1.30.0/bin/linux/amd64/kubectl"
+    dest: /usr/local/bin/kubectl
+    mode: '0755'
+
+- name: Завантаження бінарного файлу Minikube
+  ansible.builtin.get_url:
+    url: "https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64"
+    dest: /usr/local/bin/minikube
+    mode: '0755'
+
+- name: Додавання користувача до групи docker
+  ansible.builtin.user:
+    name: "{{ ansible_user | default('devops') }}"
+    groups: docker
+    append: true
+
+- name: Дозвіл порту NodePort 30080 у фаєрволі UFW
+  community.general.ufw:
+    rule: allow
+    port: '30080'
+    proto: tcp
+
+- name: Додавання SSH-ключа github-runner з вузла Study3-setup для деплою
+  ansible.posix.authorized_key:
+    user: "{{ ansible_user | default('devops') }}"
+    state: present
+    key: "{{ hostvars['Study3-setup']['ci_runner_pubkey'] }}"
+  when:
+    - "'Study3-setup' in hostvars"
+    - hostvars['Study3-setup']['ci_runner_pubkey'] is defined
+
+- name: Перевірка статусу кластера Minikube
+  become: true
+  become_user: "{{ ansible_user | default('devops') }}"
+  ansible.builtin.command: minikube status
+  register: minikube_status
+  failed_when: false
+  changed_when: false
+
+- name: Запуск кластера Minikube з пробросом порту 30080
+  become: true
+  become_user: "{{ ansible_user | default('devops') }}"
+  ansible.builtin.command: minikube start --driver=docker --cpus=2 --memory=1800m --ports=30080:30080
+  when: minikube_status.rc != 0
+  changed_when: true

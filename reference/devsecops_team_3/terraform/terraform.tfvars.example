@@ -1,0 +1,18 @@
+# Параметри підключення до vSphere
+vsphere_server   = "192.168.5.101"
+vsphere_user     = "Study3-devops@vsphere.local"
+vsphere_password = "your-password-here"
+
+# Цільова інфраструктура vCenter
+vsphere_datacenter = "Datacenter"
+vsphere_datastore  = "Toshiba_2TB"
+vsphere_host       = "192.168.5.100"
+vsphere_network    = "VM Network"
+template_name      = "ubuntu_24.04.3"
+vm_folder          = "Students-VMs"
+
+# Виділений пул IP для Команди 3: 192.168.5.102 - 192.168.5.199
+# Конфігурація за замовчуванням створює 3 ВМ:
+# - Study3-setup: 192.168.5.103 (2 vCPU, 2048 MB RAM)
+# - Study3-minikube: 192.168.5.104 (2 vCPU, 2048 MB RAM)
+# - Study3-observability: 192.168.5.105 (2 vCPU, 2048 MB RAM)

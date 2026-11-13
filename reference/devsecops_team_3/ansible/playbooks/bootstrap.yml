@@ -1,0 +1,10 @@
+---
+- name: Початкова ініціалізація користувачів devops та dev на нових ВМ
+  hosts: all
+  become: true
+  vars:
+    ansible_user: "{{ bootstrap_user | default('student') }}"
+    ansible_ssh_pass: "{{ vault_bootstrap_ssh_pass }}"
+    ansible_become_pass: "{{ vault_bootstrap_become_pass }}"
+  roles:
+    - users

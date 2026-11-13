@@ -1,0 +1,432 @@
+name: DevSecOps CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  shift-left-checks:
+    name: Shift-Left IaC & Static Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Hadolint Dockerfile Scan
+        uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf
+        with:
+          dockerfile: ./app/Dockerfile
+          failure-threshold: warning
+
+      - name: Trivy IaC, Secret & Misconfiguration Gate
+        uses: aquasecurity/trivy-action@8f28faec26515256b6d22074d1d2a8986f4cbd87
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          scanners: 'vuln,secret,misconfig'
+          format: 'table'
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+
+      - name: Validate Frontend Assets
+        run: |
+          test -s app/index.html
+          test -s app/styles.css
+          test -s app/script.js
+          node --check app/script.js
+
+  build:
+    name: Build Container Image
+    runs-on: ubuntu-latest
+    needs: shift-left-checks
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+
+      - name: Build image and export tar archive
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25
+        with:
+          context: ./app
+          file: ./app/Dockerfile
+          load: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          outputs: type=docker,dest=/tmp/image.tar
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke Test Hardened Container (Non-Root & Security Headers)
+        run: |
+          docker load -i /tmp/image.tar
+          docker run -d --rm --read-only \
+            --tmpfs /tmp:rw,noexec,nosuid \
+            --tmpfs /var/cache/nginx:rw,noexec,nosuid \
+            --tmpfs /var/run:rw,noexec,nosuid \
+            --cap-drop=ALL \
+            --security-opt=no-new-privileges:true \
+            -p 8080:8080 \
+            --name webapp-test \
+            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          sleep 2
+          CONTAINER_UID=$(docker exec webapp-test id -u)
+          if [ "$CONTAINER_UID" -eq 0 ]; then
+            echo "Container is running as root!"
+            exit 1
+          fi
+          curl -fsS http://127.0.0.1:8080/healthz | grep -q "OK"
+          curl -fsSI http://127.0.0.1:8080/ | grep -iq "X-Frame-Options: DENY"
+          curl -fsSI http://127.0.0.1:8080/ | grep -iq "Content-Security-Policy"
+          docker stop webapp-test
+
+      - name: Upload image tar artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: container-image
+          path: /tmp/image.tar
+          retention-days: 1
+
+  security-scan:
+    name: Vulnerability Security Gate (Trivy)
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Download image tar artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: container-image
+          path: /tmp
+
+      - name: Run Trivy Security Gate
+        uses: aquasecurity/trivy-action@8f28faec26515256b6d22074d1d2a8986f4cbd87
+        with:
+          input: /tmp/image.tar
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Generate Trivy SARIF report
+        if: always()
+        uses: aquasecurity/trivy-action@8f28faec26515256b6d22074d1d2a8986f4cbd87
+        with:
+          input: /tmp/image.tar
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload SARIF report to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@9f759ee644a3e7c15c1390abf49868036c00067b
+        with:
+          sarif_file: 'trivy-results.sarif'
+        continue-on-error: true
+
+  sbom:
+    name: Generate SBOM (CycloneDX)
+    runs-on: ubuntu-latest
+    needs: security-scan
+    steps:
+      - name: Download image tar artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: container-image
+          path: /tmp
+
+      - name: Install Syft
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610
+
+      - name: Generate CycloneDX JSON SBOM
+        env:
+          SYFT_FILE_METADATA_SELECTION: "none"
+        run: |
+          syft /tmp/image.tar \
+            --source-name "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" \
+            --source-version "${{ github.sha }}" \
+            -o cyclonedx-json=sbom.cdx.json
+
+      - name: Upload SBOM as CI Artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: sbom.cdx.json
+          path: sbom.cdx.json
+          retention-days: 14
+
+  grype:
+    name: Scan SBOM with Grype & Trivy
+    runs-on: ubuntu-latest
+    needs: sbom
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Download SBOM
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: sbom.cdx.json
+          path: .
+
+      - name: Scan SBOM with Trivy
+        uses: aquasecurity/trivy-action@8f28faec26515256b6d22074d1d2a8986f4cbd87
+        with:
+          scan-type: 'sbom'
+          scan-ref: 'sbom.cdx.json'
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: 'CRITICAL,HIGH'
+
+      - name: Install Grype
+        id: grype
+        uses: anchore/scan-action/download-grype@1638637db639e0ade3258b51db49a9a137574c3e
+
+      - name: Scan SBOM with Grype
+        run: |
+          ${{ steps.grype.outputs.cmd }} sbom:sbom.cdx.json \
+            --fail-on high \
+            --only-fixed \
+            -o table \
+            -o sarif=grype.sarif
+
+      - name: Upload report as CI Artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: grype.sarif
+          path: grype.sarif
+          retention-days: 14
+
+      - name: Upload Grype SARIF report to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@9f759ee644a3e7c15c1390abf49868036c00067b
+        with:
+          sarif_file: 'grype.sarif'
+          category: 'grype-sbom-scan'
+        continue-on-error: true
+
+  publish:
+    name: Publish to Container Registry
+    runs-on: ubuntu-latest
+    needs: [security-scan, sbom, grype]
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image_tag: ${{ steps.push.outputs.image_tag }}
+      image_digest: ${{ steps.push.outputs.image_digest }}
+    steps:
+      - name: Download image tar artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: container-image
+          path: /tmp
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Load image to local Docker daemon
+        run: |
+          docker load -i /tmp/image.tar
+
+      - name: Tag and push container image
+        id: push
+        env:
+          TARGET_IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          GIT_SHA: ${{ github.sha }}
+        run: |
+          IMAGE_LOWER=$(echo "${TARGET_IMAGE}" | tr '[:upper:]' '[:lower:]')
+          TAG_SHA="${IMAGE_LOWER}:${GIT_SHA}"
+          TAG_LATEST="${IMAGE_LOWER}:latest"
+
+          docker tag "${TARGET_IMAGE}:${GIT_SHA}" "${TAG_SHA}"
+          docker tag "${TARGET_IMAGE}:${GIT_SHA}" "${TAG_LATEST}"
+          docker push "${TAG_SHA}"
+          docker push "${TAG_LATEST}"
+
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "${TAG_SHA}")
+          echo "image_tag=${TAG_SHA}" >> "$GITHUB_OUTPUT"
+          echo "image_digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+
+  sign:
+    name: Cryptographic Sign & Attest (Cosign)
+    runs-on: ubuntu-latest
+    needs: publish
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - name: Install Cosign CLI
+        uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a
+
+      - name: Download SBOM Artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: sbom.cdx.json
+          path: ./
+
+      - name: Log in to GHCR for Cosign
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sign Image (Keyless OIDC)
+        env:
+          DIGEST: ${{ needs.publish.outputs.image_digest }}
+        run: |
+          cosign sign --yes "${DIGEST}"
+
+      - name: Attest CycloneDX SBOM to Container Image
+        env:
+          DIGEST: ${{ needs.publish.outputs.image_digest }}
+        run: |
+          cosign attest --yes --predicate sbom.cdx.json --type cyclonedx "${DIGEST}"
+
+      - name: Verify Cosign Signature and Attestation
+        env:
+          DIGEST: ${{ needs.publish.outputs.image_digest }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          cosign verify \
+            --certificate-identity "https://github.com/${WORKFLOW_REF}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${DIGEST}"
+
+          cosign verify-attestation --type cyclonedx \
+            --certificate-identity "https://github.com/${WORKFLOW_REF}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${DIGEST}" > /dev/null
+
+  release:
+    name: Automatic Release
+    runs-on: ubuntu-latest
+    needs: [publish, sign]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    steps:
+      - name: Download SBOM
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: sbom.cdx.json
+          path: ./release
+
+      - name: Download Grype report
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: grype.sarif
+          path: ./release
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE_DIGEST: ${{ needs.publish.outputs.image_digest }}
+        run: |
+          TAG="v$(date -u +%Y.%m.%d)-${GITHUB_SHA::7}"
+
+          cat > notes.md <<EOF
+          ## Signed container image
+          \`${IMAGE_DIGEST}\`
+
+          ## Verify it
+          \`\`\`
+          cosign verify \\
+            --certificate-identity-regexp ".*github.com/${GITHUB_REPOSITORY}.*" \\
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \\
+            ${IMAGE_DIGEST}
+          \`\`\`
+          EOF
+
+          gh release create "${TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --target "${GITHUB_SHA}" \
+            --title "${TAG}" \
+            --notes-file notes.md \
+            --generate-notes \
+            release/sbom.cdx.json \
+            release/grype.sarif
+
+  deploy:
+    name: Manual Approval & Deploy to Minikube
+    runs-on: [self-hosted, Linux, X64, study3-setup]
+    needs: [publish, sign, release]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment:
+      name: production
+      url: http://192.168.5.104:30080
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify Image Signature Before Deploy
+        env:
+          DIGEST: ${{ needs.publish.outputs.image_digest }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          cosign verify \
+            --certificate-identity "https://github.com/${WORKFLOW_REF}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${DIGEST}"
+
+      - name: Deploy Verified Image to Study3-minikube
+        env:
+          DIGEST: ${{ needs.publish.outputs.image_digest }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: |
+          docker pull "${DIGEST}"
+          docker tag "${DIGEST}" study3-devsecops-web:latest
+          docker save study3-devsecops-web:latest | ssh -o StrictHostKeyChecking=no devops@192.168.5.104 "minikube image load -"
+          scp -o StrictHostKeyChecking=no k8s/webapp.yaml devops@192.168.5.104:/tmp/webapp.yaml
+          ssh -o StrictHostKeyChecking=no devops@192.168.5.104 "kubectl apply -f /tmp/webapp.yaml && kubectl rollout restart deployment/study3-webapp && kubectl rollout status deployment/study3-webapp --timeout=120s"
+          curl -fsS --retry 5 --retry-delay 2 --retry-connrefused http://192.168.5.104:30080/healthz | grep -q "OK"
