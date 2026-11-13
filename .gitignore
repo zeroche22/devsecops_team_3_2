@@ -22,3 +22,11 @@ node_modules/
 __pycache__/
 evidence/private/
 /reference
+.venv/
+.ansible-venv/
+.ci-venv/
+.tools/
+.ansible/
+.cache/
+ansible/inventory/hosts.local.yml
+ansible/group_vars/all/secrets.local.yml
