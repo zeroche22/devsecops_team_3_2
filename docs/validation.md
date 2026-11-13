@@ -10,6 +10,6 @@
 - API-частина ролі Ansible виконана на цьому тестовому Zabbix: змінено початковий пароль адміністратора, створено групу проєкту та два hosts з активним Linux template і TLS PSK. Перший успішний запуск: `changed=4, failed=0`; повторний: `changed=0, failed=0`.
 - Одноразовий замір пам'яті контейнерів без реального потоку метрик: PostgreSQL приблизно 159 MiB, Zabbix server 46 MiB, web 57 MiB. Це не оцінка пікового споживання VM чи навантажувальний тест.
 - Після перевірки тестові контейнери, мережу та volume видалено.
-- GitHub workflows перевіряються локальним actionlint; фактичний запуск GitHub CI та ручного CD ще потрібно підтвердити після публікації й налаштування runner/secrets.
+- GitHub workflows пройшли локальний actionlint. [GitHub CI для коміту 93cc996](https://github.com/zeroche22/devsecops_team_3_2/actions/runs/43521258521) завершився успішно: Terraform fmt/init/validate/test та Ansible syntax/lint. Ручний CD ще не перевірено: потрібні цільові VM, зареєстрований runner і secrets.
 
 Не перевірено на цільових VM: клонування Oracle Linux 9, встановлення RPM/Docker, SELinux/firewall, systemd-служби агента та runner, отримання метрик, стабільність у межах 2 ГБ RAM, GitHub registration і реальний deploy. Поточний блокер описано у [звіті доступу](vsphere-access.md).
