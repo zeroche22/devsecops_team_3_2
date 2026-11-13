@@ -1,0 +1,50 @@
+name: Deploy Zabbix
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lab-zabbix-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, Linux, X64, study3-v3-management]
+    environment: lab
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Configure and verify Zabbix
+        shell: bash
+        env:
+          ANSIBLE_CONFIG: ${{ github.workspace }}/ansible/ansible.cfg
+          ANSIBLE_COLLECTIONS_PATH: ${{ github.workspace }}/.ansible/collections
+          ANSIBLE_LOCAL_TEMP: ${{ runner.temp }}/ansible-tmp
+          LAB_SECRETS_YAML: ${{ secrets.LAB_SECRETS_YAML }}
+          LAB_KNOWN_HOSTS: ${{ vars.LAB_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          test -n "$LAB_SECRETS_YAML"
+          test -n "$LAB_KNOWN_HOSTS"
+          deploy_tmp=$(mktemp -d "$RUNNER_TEMP/zabbix-deploy.XXXXXX")
+          trap 'rm -rf "$deploy_tmp"' EXIT
+          printf '%s\n' "$LAB_SECRETS_YAML" > "$deploy_tmp/secrets.yml"
+          printf '%s\n' "$LAB_KNOWN_HOSTS" > "$deploy_tmp/known_hosts"
+          export ANSIBLE_SSH_COMMON_ARGS="-o UserKnownHostsFile=$deploy_tmp/known_hosts -o StrictHostKeyChecking=yes"
+          /opt/ansible/bin/ansible-galaxy collection install -r ansible/requirements.yml -p .ansible/collections
+          /opt/ansible/bin/ansible-playbook -i ansible/inventory/hosts.example.yml \
+            -e ansible_ssh_private_key_file=/home/github-runner/.ssh/id_ed25519 \
+            -e "@$deploy_tmp/secrets.yml" ansible/playbooks/zabbix.yml
+          curl --fail --silent --show-error --retry 5 --retry-delay 5 \
+            -H 'Content-Type: application/json-rpc' \
+            --data '{"jsonrpc":"2.0","method":"apiinfo.version","params":{},"id":1}' \
+            http://192.168.5.122:8080/api_jsonrpc.php | \
+            python3 -c 'import json,sys; assert json.load(sys.stdin)["result"].startswith("7.0.")'

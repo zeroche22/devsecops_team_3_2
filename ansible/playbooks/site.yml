@@ -1,0 +1,33 @@
+---
+- name: Configure Oracle Linux hosts
+  hosts: all
+  become: true
+  vars_files:
+    - ../group_vars/all/vars.yml
+  roles:
+    - common
+
+- name: Configure Zabbix server
+  hosts: monitoring_nodes
+  become: true
+  vars_files:
+    - ../group_vars/all/vars.yml
+  roles:
+    - docker
+    - zabbix
+
+- name: Configure operating system monitoring
+  hosts: all
+  become: true
+  vars_files:
+    - ../group_vars/all/vars.yml
+  roles:
+    - zabbix_agent
+
+- name: Configure automation host
+  hosts: control_nodes
+  become: true
+  vars_files:
+    - ../group_vars/all/vars.yml
+  roles:
+    - ci_runner

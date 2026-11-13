@@ -1,0 +1,48 @@
+name: Infrastructure CI
+
+on:
+  push:
+    branches: [main, 'module-*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
+        with:
+          terraform_version: 1.9.8
+      - name: Validate Terraform
+        run: |
+          terraform -chdir=terraform fmt -check -diff
+          terraform -chdir=terraform init -backend=false -input=false -lockfile=readonly
+          terraform -chdir=terraform validate
+          terraform -chdir=terraform test -no-color
+      - name: Set up Ansible
+        run: |
+          python3 -m venv .ci-venv
+          .ci-venv/bin/pip install -r requirements-ci.txt
+          .ci-venv/bin/ansible-galaxy collection install -r ansible/requirements.yml -p .ansible/collections
+      - name: Validate Ansible
+        env:
+          ANSIBLE_CONFIG: ${{ github.workspace }}/ansible/ansible.cfg
+          ANSIBLE_COLLECTIONS_PATH: ${{ github.workspace }}/.ansible/collections
+          ANSIBLE_LOCAL_TEMP: ${{ github.workspace }}/.ansible/tmp
+        run: |
+          .ci-venv/bin/ansible-playbook -i ansible/inventory/hosts.example.yml --syntax-check ansible/playbooks/site.yml
+          .ci-venv/bin/ansible-lint ansible/

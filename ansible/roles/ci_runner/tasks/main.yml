@@ -1,0 +1,139 @@
+---
+- name: Require x86-64 architecture
+  ansible.builtin.assert:
+    that: ansible_facts.architecture == 'x86_64'
+
+- name: Install runner and automation dependencies
+  ansible.builtin.dnf:
+    name:
+      - libicu
+      - openssl-libs
+      - krb5-libs
+      - zlib
+      - lttng-ust
+      - python3.12
+      - python3.12-pip
+    state: present
+
+- name: Create runner account and SSH key
+  ansible.builtin.user:
+    name: github-runner
+    shell: /bin/bash
+    create_home: true
+    generate_ssh_key: true
+    ssh_key_type: ed25519
+    ssh_key_file: .ssh/id_ed25519
+  register: ci_runner_user
+
+- name: Authorize runner key on managed hosts
+  ansible.posix.authorized_key:
+    user: "{{ hostvars[item].ansible_user }}"
+    key: "{{ ci_runner_user.ssh_public_key }}"
+    state: present
+  delegate_to: "{{ item }}"
+  loop: "{{ groups['all'] }}"
+
+- name: Create runner directory
+  ansible.builtin.file:
+    path: /opt/actions-runner
+    state: directory
+    owner: github-runner
+    group: github-runner
+    mode: "0755"
+
+- name: Download verified runner archive
+  ansible.builtin.get_url:
+    url: "https://github.com/actions/runner/releases/download/v{{ runner_version }}/actions-runner-linux-x64-{{ runner_version }}.tar.gz"
+    dest: "/var/tmp/actions-runner-{{ runner_version }}.tar.gz"
+    checksum: "{{ runner_archive_checksum }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Extract runner
+  ansible.builtin.unarchive:
+    src: "/var/tmp/actions-runner-{{ runner_version }}.tar.gz"
+    dest: /opt/actions-runner
+    remote_src: true
+    owner: github-runner
+    group: github-runner
+    creates: /opt/actions-runner/config.sh
+
+- name: Install Ansible in an isolated environment
+  ansible.builtin.pip:
+    name: ansible-core==2.20.11
+    virtualenv: /opt/ansible
+    virtualenv_command: python3.12 -m venv
+
+- name: Download verified Terraform archive
+  ansible.builtin.get_url:
+    url: "https://releases.hashicorp.com/terraform/{{ terraform_version }}/terraform_{{ terraform_version }}_linux_amd64.zip"
+    dest: "/var/tmp/terraform_{{ terraform_version }}_linux_amd64.zip"
+    checksum: "sha256:https://releases.hashicorp.com/terraform/{{ terraform_version }}/terraform_{{ terraform_version }}_SHA256SUMS"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install Terraform
+  ansible.builtin.unarchive:
+    src: "/var/tmp/terraform_{{ terraform_version }}_linux_amd64.zip"
+    dest: /usr/local/bin
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
+    include:
+      - terraform
+
+- name: Inspect runner registration
+  ansible.builtin.stat:
+    path: /opt/actions-runner/.runner
+  register: ci_runner_registration
+
+- name: Register runner with GitHub
+  become: true
+  become_user: github-runner
+  ansible.builtin.command:
+    argv:
+      - ./config.sh
+      - --unattended
+      - --url
+      - "{{ runner_repository }}"
+      - --token
+      - "{{ runner_registration_token }}"
+      - --name
+      - "{{ runner_name }}"
+      - --labels
+      - "{{ runner_labels }}"
+      - --work
+      - _work
+    chdir: /opt/actions-runner
+    creates: /opt/actions-runner/.runner
+  no_log: true
+  when:
+    - not ci_runner_registration.stat.exists
+    - runner_registration_token | length > 0
+
+- name: Recheck runner registration
+  ansible.builtin.stat:
+    path: /opt/actions-runner/.runner
+  register: ci_runner_configured
+
+- name: Install runner service
+  ansible.builtin.command:
+    argv: [./svc.sh, install, github-runner]
+    chdir: /opt/actions-runner
+    creates: "/etc/systemd/system/actions.runner.zeroche22-devsecops_team_3_2.{{ runner_name }}.service"
+  when: ci_runner_configured.stat.exists
+
+- name: Enable runner service
+  ansible.builtin.systemd_service:
+    name: "actions.runner.zeroche22-devsecops_team_3_2.{{ runner_name }}.service"
+    state: started
+    enabled: true
+  when: ci_runner_configured.stat.exists
+
+- name: Report runner registration prerequisite
+  ansible.builtin.debug:
+    msg: Runner installed but not registered. Supply a fresh GitHub registration token and rerun this playbook.
+  when: not ci_runner_configured.stat.exists

@@ -1,0 +1,9 @@
+---
+- name: Configure GitHub Actions runner
+  hosts: control_nodes
+  become: true
+  vars_files:
+    - ../group_vars/all/vars.yml
+  roles:
+    - common
+    - ci_runner
