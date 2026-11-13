@@ -1,0 +1,28 @@
+---
+- name: Install repository management
+  ansible.builtin.dnf:
+    name: dnf-plugins-core
+    state: present
+
+- name: Configure Docker RHEL repository
+  ansible.builtin.get_url:
+    url: https://download.docker.com/linux/rhel/docker-ce.repo
+    dest: /etc/yum.repos.d/docker-ce.repo
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install Docker and Compose
+  ansible.builtin.dnf:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-compose-plugin
+    state: present
+
+- name: Enable Docker
+  ansible.builtin.systemd_service:
+    name: docker
+    state: started
+    enabled: true

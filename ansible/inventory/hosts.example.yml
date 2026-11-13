@@ -1,0 +1,14 @@
+---
+all:
+  vars:
+    ansible_user: devops
+    ansible_ssh_private_key_file: ~/.ssh/devsecops_key
+  children:
+    control_nodes:
+      hosts:
+        study3-v3-management:
+          ansible_host: 192.168.5.120
+    monitoring_nodes:
+      hosts:
+        study3-v3-zabbix:
+          ansible_host: 192.168.5.122

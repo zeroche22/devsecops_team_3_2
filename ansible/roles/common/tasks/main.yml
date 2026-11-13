@@ -1,0 +1,36 @@
+---
+- name: Require Oracle Linux 9
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.distribution == 'OracleLinux'
+      - ansible_facts.distribution_major_version == '9'
+    fail_msg: This project requires Oracle Linux 9.
+
+- name: Install base packages
+  ansible.builtin.dnf:
+    name:
+      - ca-certificates
+      - curl
+      - git
+      - tar
+      - unzip
+      - chrony
+      - firewalld
+      - python3-firewall
+    state: present
+
+- name: Enable time synchronization and firewall
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop:
+    - chronyd
+    - firewalld
+
+- name: Permit SSH access
+  ansible.posix.firewalld:
+    service: ssh
+    state: enabled
+    permanent: true
+    immediate: true

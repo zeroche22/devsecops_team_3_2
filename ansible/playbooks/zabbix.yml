@@ -1,0 +1,18 @@
+---
+- name: Deploy Zabbix server
+  hosts: monitoring_nodes
+  become: true
+  vars_files:
+    - ../group_vars/all/vars.yml
+  roles:
+    - common
+    - docker
+    - zabbix
+
+- name: Configure Zabbix agents
+  hosts: all
+  become: true
+  vars_files:
+    - ../group_vars/all/vars.yml
+  roles:
+    - zabbix_agent

@@ -1,0 +1,74 @@
+---
+- name: Wait for Zabbix API
+  ansible.builtin.uri:
+    url: "http://{{ zabbix_server_ip }}:{{ zabbix_web_port }}/api_jsonrpc.php"
+    method: POST
+    body_format: json
+    body:
+      jsonrpc: "2.0"
+      method: apiinfo.version
+      params: {}
+      id: 1
+  register: zabbix_api_version
+  until: zabbix_api_version.json.result is defined
+  retries: 60
+  delay: 5
+
+- name: Authenticate with configured administrator password
+  ansible.builtin.uri:
+    url: "http://{{ zabbix_server_ip }}:{{ zabbix_web_port }}/api_jsonrpc.php"
+    method: POST
+    body_format: json
+    body:
+      jsonrpc: "2.0"
+      method: user.login
+      params:
+        username: Admin
+        password: "{{ zabbix_admin_password }}"
+      id: 2
+  register: zabbix_admin_login
+  no_log: true
+
+- name: Replace initial administrator password
+  when: zabbix_admin_login.json.result is not defined
+  no_log: true
+  block:
+    - name: Authenticate initial administrator
+      ansible.builtin.uri:
+        url: "http://{{ zabbix_server_ip }}:{{ zabbix_web_port }}/api_jsonrpc.php"
+        method: POST
+        body_format: json
+        body:
+          jsonrpc: "2.0"
+          method: user.login
+          params:
+            username: Admin
+            password: zabbix
+          id: 3
+      register: zabbix_initial_login
+
+    - name: Require successful initial login
+      ansible.builtin.assert:
+        that: zabbix_initial_login.json.result is defined
+        fail_msg: Existing Zabbix administrator password does not match either configured or initial credentials.
+
+    - name: Set administrator password
+      ansible.builtin.uri:
+        url: "http://{{ zabbix_server_ip }}:{{ zabbix_web_port }}/api_jsonrpc.php"
+        method: POST
+        body_format: json
+        body:
+          jsonrpc: "2.0"
+          method: user.update
+          params:
+            userid: "1"
+            current_passwd: zabbix
+            passwd: "{{ zabbix_admin_password }}"
+          auth: "{{ zabbix_initial_login.json.result }}"
+          id: 4
+      register: zabbix_password_update
+      changed_when: zabbix_password_update.json.result is defined
+      failed_when: zabbix_password_update.json.result is not defined
+
+- name: Configure monitored hosts
+  ansible.builtin.include_tasks: register_hosts.yml

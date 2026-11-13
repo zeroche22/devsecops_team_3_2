@@ -1,0 +1,18 @@
+---
+zabbix_server_ip: 192.168.5.122
+zabbix_web_port: 8080
+zabbix_directory: /opt/study3-zabbix
+zabbix_timezone: Europe/Kyiv
+zabbix_server_image: zabbix/zabbix-server-pgsql:alpine-7.0.32@sha256:401dc90cff398aaf6a0fa72625f4b9b57407e61231f94e13e7f4e68aeff0c42c
+zabbix_web_image: zabbix/zabbix-web-nginx-pgsql:alpine-7.0.32@sha256:a54ce2e19aaf0a61609e4bbc7ec01c16bef504e6e1c51e3854120ac76d2dbaeb
+zabbix_database_image: postgres:16-alpine@sha256:f377d590e5474681d4d7838635031a2b50647923b7abfa803ce9b5ff35d5c663
+zabbix_db_password: "{{ vault_zabbix_db_password }}"
+zabbix_admin_password: "{{ vault_zabbix_admin_password }}"
+zabbix_agent_psk: "{{ vault_zabbix_agent_psk }}"
+runner_version: 2.338.2
+runner_archive_checksum: sha256:baebf204307bac6193480852732f0aba2ae97b6c5597c244f4d5558390147c40
+runner_repository: https://github.com/zeroche22/devsecops_team_3_2
+runner_name: study3-v3-management
+runner_labels: study3-v3-management
+runner_registration_token: "{{ vault_runner_registration_token | default('') }}"
+terraform_version: 1.9.8

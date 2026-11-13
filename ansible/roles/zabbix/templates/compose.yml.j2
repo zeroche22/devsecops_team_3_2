@@ -1,0 +1,73 @@
+services:
+  database:
+    image: {{ zabbix_database_image }}
+    restart: unless-stopped
+    mem_limit: 512m
+    environment:
+      POSTGRES_USER: zabbix
+      POSTGRES_DB: zabbix
+      POSTGRES_PASSWORD_FILE: /run/secrets/database_password
+    secrets:
+      - database_password
+    volumes:
+      - database:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U zabbix -d zabbix"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+  server:
+    image: {{ zabbix_server_image }}
+    restart: unless-stopped
+    mem_limit: 512m
+    environment:
+      DB_SERVER_HOST: database
+      POSTGRES_USER: zabbix
+      POSTGRES_DB: zabbix
+      POSTGRES_PASSWORD_FILE: /run/secrets/database_password
+      ZBX_STARTPOLLERS: "2"
+      ZBX_STARTPOLLERSUNREACHABLE: "1"
+      ZBX_STARTPINGERS: "1"
+      ZBX_STARTTRAPPERS: "2"
+      ZBX_CACHESIZE: 32M
+      ZBX_HISTORYCACHESIZE: 16M
+      ZBX_VALUECACHESIZE: 16M
+    secrets:
+      - database_password
+    ports:
+      - "{{ zabbix_server_ip }}:10051:10051"
+    depends_on:
+      database:
+        condition: service_healthy
+    logging: *logging
+  web:
+    image: {{ zabbix_web_image }}
+    restart: unless-stopped
+    mem_limit: 256m
+    environment:
+      DB_SERVER_HOST: database
+      POSTGRES_USER: zabbix
+      POSTGRES_DB: zabbix
+      POSTGRES_PASSWORD_FILE: /run/secrets/database_password
+      ZBX_SERVER_HOST: server
+      PHP_TZ: {{ zabbix_timezone }}
+    secrets:
+      - database_password
+    ports:
+      - "{{ zabbix_server_ip }}:{{ zabbix_web_port }}:8080"
+    depends_on:
+      database:
+        condition: service_healthy
+      server:
+        condition: service_started
+    logging: *logging
+secrets:
+  database_password:
+    file: ./database_password
+volumes:
+  database:

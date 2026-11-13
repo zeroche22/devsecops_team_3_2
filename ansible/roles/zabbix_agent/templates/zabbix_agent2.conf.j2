@@ -1,0 +1,10 @@
+LogType=system
+Server=127.0.0.1
+ListenIP=127.0.0.1
+ServerActive={{ zabbix_server_ip }}:10051
+Hostname={{ inventory_hostname }}
+TLSConnect=psk
+TLSAccept=psk
+TLSPSKIdentity={{ inventory_hostname }}
+TLSPSKFile=/etc/zabbix/agent.psk
+Include=/etc/zabbix/zabbix_agent2.d/*.conf

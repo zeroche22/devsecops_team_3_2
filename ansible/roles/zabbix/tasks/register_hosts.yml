@@ -1,0 +1,103 @@
+---
+- name: Authenticate Zabbix configuration session
+  ansible.builtin.uri:
+    url: "http://{{ zabbix_server_ip }}:{{ zabbix_web_port }}/api_jsonrpc.php"
+    method: POST
+    body_format: json
+    body:
+      jsonrpc: "2.0"
+      method: user.login
+      params:
+        username: Admin
+        password: "{{ zabbix_admin_password }}"
+      id: 10
+  register: zabbix_configuration_login
+  no_log: true
+
+- name: Require authenticated configuration session
+  ansible.builtin.assert:
+    that: zabbix_configuration_login.json.result is defined
+  no_log: true
+
+- name: Find project host group
+  ansible.builtin.uri:
+    url: "http://{{ zabbix_server_ip }}:{{ zabbix_web_port }}/api_jsonrpc.php"
+    method: POST
+    body_format: json
+    body:
+      jsonrpc: "2.0"
+      method: hostgroup.get
+      params:
+        filter:
+          name: [Study3 v3]
+      auth: "{{ zabbix_configuration_login.json.result }}"
+      id: 11
+  register: zabbix_group_lookup
+  no_log: true
+
+- name: Create project host group
+  ansible.builtin.uri:
+    url: "http://{{ zabbix_server_ip }}:{{ zabbix_web_port }}/api_jsonrpc.php"
+    method: POST
+    body_format: json
+    body:
+      jsonrpc: "2.0"
+      method: hostgroup.create
+      params:
+        name: Study3 v3
+      auth: "{{ zabbix_configuration_login.json.result }}"
+      id: 12
+  register: zabbix_group_create
+  when: zabbix_group_lookup.json.result | length == 0
+  changed_when: zabbix_group_create.json.result is defined
+  failed_when: zabbix_group_create.json.result is not defined
+  no_log: true
+
+- name: Find active Linux template
+  ansible.builtin.uri:
+    url: "http://{{ zabbix_server_ip }}:{{ zabbix_web_port }}/api_jsonrpc.php"
+    method: POST
+    body_format: json
+    body:
+      jsonrpc: "2.0"
+      method: template.get
+      params:
+        filter:
+          host: [Linux by Zabbix agent active]
+      auth: "{{ zabbix_configuration_login.json.result }}"
+      id: 13
+  register: zabbix_template_lookup
+  no_log: true
+
+- name: Require active Linux template
+  ansible.builtin.assert:
+    that: zabbix_template_lookup.json.result | length == 1
+  no_log: true
+
+- name: Set monitoring identifiers
+  ansible.builtin.set_fact:
+    zabbix_project_group_id: >-
+      {{ zabbix_group_lookup.json.result[0].groupid
+         if zabbix_group_lookup.json.result | length > 0
+         else zabbix_group_create.json.result.groupids[0] }}
+    zabbix_linux_template_id: "{{ zabbix_template_lookup.json.result[0].templateid }}"
+  no_log: true
+
+- name: Register inventory hosts
+  ansible.builtin.include_tasks: register_host.yml
+  loop: "{{ groups['all'] }}"
+  loop_control:
+    loop_var: monitored_host
+
+- name: Close configuration session
+  ansible.builtin.uri:
+    url: "http://{{ zabbix_server_ip }}:{{ zabbix_web_port }}/api_jsonrpc.php"
+    method: POST
+    body_format: json
+    body:
+      jsonrpc: "2.0"
+      method: user.logout
+      params: []
+      auth: "{{ zabbix_configuration_login.json.result }}"
+      id: 19
+  no_log: true

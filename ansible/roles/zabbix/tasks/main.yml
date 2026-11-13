@@ -1,0 +1,49 @@
+---
+- name: Require non-placeholder Zabbix passwords
+  ansible.builtin.assert:
+    that:
+      - zabbix_db_password | length >= 16
+      - zabbix_admin_password | length >= 16
+      - not zabbix_db_password.startswith('REPLACE_')
+      - not zabbix_admin_password.startswith('REPLACE_')
+  no_log: true
+
+- name: Create Zabbix configuration directory
+  ansible.builtin.file:
+    path: "{{ zabbix_directory }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Install database password
+  ansible.builtin.copy:
+    content: "{{ zabbix_db_password }}"
+    dest: "{{ zabbix_directory }}/database_password"
+    owner: root
+    group: root
+    # Compose mounts this file into non-root containers; parent directory is 0700.
+    mode: "0444"
+  no_log: true
+
+- name: Install Compose configuration
+  ansible.builtin.template:
+    src: compose.yml.j2
+    dest: "{{ zabbix_directory }}/compose.yml"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Validate Compose configuration
+  ansible.builtin.command:
+    argv: [docker, compose, --project-directory, "{{ zabbix_directory }}", config, --quiet]
+  changed_when: false
+
+- name: Start Zabbix services
+  ansible.builtin.command:
+    argv: [docker, compose, --project-directory, "{{ zabbix_directory }}", up, --detach, --wait, --wait-timeout, "300"]
+  register: zabbix_compose
+  changed_when: (zabbix_compose.stdout ~ zabbix_compose.stderr) is search('(?i)(created|recreated|started|pulled)')
+
+- name: Configure Zabbix API and monitored hosts
+  ansible.builtin.include_tasks: configure_api.yml

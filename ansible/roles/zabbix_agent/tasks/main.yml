@@ -1,0 +1,46 @@
+---
+- name: Validate agent PSK
+  ansible.builtin.assert:
+    that: zabbix_agent_psk is match('^[0-9a-fA-F]{64}$')
+  no_log: true
+
+- name: Configure official Zabbix repository
+  ansible.builtin.yum_repository:
+    name: zabbix
+    description: Zabbix 7.0 LTS for Oracle Linux 9
+    baseurl: https://repo.zabbix.com/zabbix/7.0/oracle/9/$basearch/
+    gpgcheck: true
+    gpgkey:
+      - https://repo.zabbix.com/RPM-GPG-KEY-ZABBIX-08EFA7DD
+      - https://repo.zabbix.com/RPM-GPG-KEY-ZABBIX-B5333005
+    enabled: true
+
+- name: Install Zabbix agent 2
+  ansible.builtin.dnf:
+    name: zabbix-agent2-7.0.32
+    state: present
+
+- name: Install agent encryption key
+  ansible.builtin.copy:
+    content: "{{ zabbix_agent_psk }}"
+    dest: /etc/zabbix/agent.psk
+    owner: zabbix
+    group: zabbix
+    mode: "0600"
+  no_log: true
+  notify: Restart Zabbix agent
+
+- name: Configure active agent
+  ansible.builtin.template:
+    src: zabbix_agent2.conf.j2
+    dest: /etc/zabbix/zabbix_agent2.conf
+    owner: root
+    group: zabbix
+    mode: "0640"
+  notify: Restart Zabbix agent
+
+- name: Enable Zabbix agent
+  ansible.builtin.systemd_service:
+    name: zabbix-agent2
+    state: started
+    enabled: true

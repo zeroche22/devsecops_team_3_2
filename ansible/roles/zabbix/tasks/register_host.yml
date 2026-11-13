@@ -1,0 +1,43 @@
+---
+- name: Find monitored host
+  ansible.builtin.uri:
+    url: "http://{{ zabbix_server_ip }}:{{ zabbix_web_port }}/api_jsonrpc.php"
+    method: POST
+    body_format: json
+    body:
+      jsonrpc: "2.0"
+      method: host.get
+      params:
+        output: [hostid]
+        filter:
+          host: ["{{ monitored_host }}"]
+      auth: "{{ zabbix_configuration_login.json.result }}"
+      id: 14
+  register: zabbix_host_lookup
+  no_log: true
+
+- name: Create monitored host with encrypted active checks
+  ansible.builtin.uri:
+    url: "http://{{ zabbix_server_ip }}:{{ zabbix_web_port }}/api_jsonrpc.php"
+    method: POST
+    body_format: json
+    body:
+      jsonrpc: "2.0"
+      method: host.create
+      params:
+        host: "{{ monitored_host }}"
+        groups:
+          - groupid: "{{ zabbix_project_group_id }}"
+        templates:
+          - templateid: "{{ zabbix_linux_template_id }}"
+        tls_connect: 2
+        tls_accept: 2
+        tls_psk_identity: "{{ monitored_host }}"
+        tls_psk: "{{ zabbix_agent_psk }}"
+      auth: "{{ zabbix_configuration_login.json.result }}"
+      id: 15
+  register: zabbix_host_create
+  when: zabbix_host_lookup.json.result | length == 0
+  changed_when: zabbix_host_create.json.result is defined
+  failed_when: zabbix_host_create.json.result is not defined
+  no_log: true
