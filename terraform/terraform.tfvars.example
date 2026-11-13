@@ -1,0 +1,19 @@
+# Значення vCenter успадковані з попереднього проєкту: перевірити перед plan.
+vsphere_server     = "192.168.5.101"
+vsphere_user       = "y.manzhos@vsphere.local"
+vsphere_datacenter = "Datacenter"
+vsphere_datastore  = "Toshiba_2TB"
+vsphere_host       = "192.168.5.100"
+vsphere_network    = "VM Network"
+vm_folder          = "Students-VMs/team-3"
+
+# Замінити підтвердженою назвою шаблону Oracle Linux 9.
+template_name = "REPLACE_WITH_ORACLE_LINUX_9_TEMPLATE"
+
+# Значення мережі нижче — приклад з вихідного проєкту; підтвердити.
+ipv4_gateway = "192.168.5.1"
+ipv4_netmask = 24
+dns_servers  = ["192.168.5.1"]
+
+# Пароль задавати через TF_VAR_vsphere_password або лише в локальному tfvars.
+# TLS перевіряється за замовчуванням; довірений CA налаштувати на машині запуску.
